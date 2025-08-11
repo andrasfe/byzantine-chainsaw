@@ -324,13 +324,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
 
-## 📞 Support
-
-For questions and support:
-- 📧 Email: [your-email@domain.com]
-- 🐛 Issues: [GitHub Issues](https://github.com/your-username/repo/issues)
-- 📖 Documentation: [Project Wiki](https://github.com/your-username/repo/wiki)
-
 ---
 
 **Built with ❤️ for advancing quantum-classical hybrid approaches to distributed system security.**
