@@ -302,6 +302,20 @@ The modular architecture supports comprehensive testing:
 
 This implementation is based on research in quantum-enhanced Byzantine detection for federated learning, combining classical Multi-KRUM algorithms with quantum feature mapping techniques for improved malicious client identification.
 
+### Citation
+
+If you use this work in your research, please cite:
+
+```bibtex
+@software{ferenczi2025chainsaw,
+  title={Quantum-Enhanced Byzantine Detection in Federated Learning},
+  author={Ferenczi, Andras},
+  year={2025},
+  url={https://github.com/andrasfe/byzantine-chainsaw},
+  note={Modular implementation comparing classical Multi-KRUM with quantum feature map approaches for Byzantine fault tolerance}
+}
+```
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
