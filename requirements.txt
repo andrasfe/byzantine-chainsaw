@@ -1,0 +1,27 @@
+# Core ML and Data Science
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.21.0
+pandas>=1.3.0
+scikit-learn>=1.0.0
+matplotlib>=3.5.0
+
+# Quantum Computing
+qiskit==1.1.1
+qiskit-aer-gpu==0.15.1
+
+# Additional utilities
+pyyaml>=6.0
+psutil>=5.9.0
+tqdm>=4.60.0
+
+# Development and Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+flake8>=6.0.0
+black>=23.0.0
+isort>=5.12.0
+
+# Optional: Jupyter for experimentation
+jupyter>=1.0.0
+ipython>=8.0.0

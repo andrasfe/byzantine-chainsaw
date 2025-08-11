@@ -1,0 +1,43 @@
+experiment_name: "integration_test"
+dataset: "cifar10"
+
+federated:
+  num_honest_clients: 4
+  num_byzantine_clients: 2
+  num_rounds: 2  # Short test
+  local_epochs: 1
+  batch_size: 16  # Smaller for faster testing
+  learning_rate: 0.1
+
+quantum:
+  num_qubits: 8   # Smaller for faster testing
+  num_shots: 256  # Fewer shots for speed
+  backend_type: "aer_simulator"
+  use_gpu: false  # Use CPU for reliability
+  max_memory_mb: 5000
+  batch_size: 2   # Process 2 clients at a time
+  feature_map_reps: 1  # Fewer reps for speed
+  entanglement: "full"
+  top_k_outcomes: 100  # Fewer outcomes for speed
+
+detection:
+  detection_method: "standard_multikrum"
+  projection_method: "importance"
+  projection_dim: 8   # Match num_qubits
+  detection_noise: 0.1
+  detection_methods:
+    - "standard_multikrum"
+    - "classical_random"
+    - "classical_importance"
+    - "quantum_zz"
+
+attack:
+  attack_type: "lie_attack"
+  z_max_range: [0.0, 0.5, 1.0]  # Fewer options for speed
+  attack_strength: 1.0
+
+seed: 123
+device: "cpu"  # Force CPU for reliability
+log_level: "INFO"
+save_results: true
+output_dir: "./integration_test_results"

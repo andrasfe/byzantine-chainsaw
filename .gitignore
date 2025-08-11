@@ -1,0 +1,92 @@
+# Original monolithic file
+qe_multikrum.py
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+qe_byzantine_venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Results and logs
+results/
+integration_test_results/
+*.log
+*.out
+
+# Datasets (but keep Python source files)
+data/cifar-10-batches-py/
+data/cifar-10-python.tar.gz
+data/mnist/
+data/*.tar.gz
+data/*.zip
+data/*.pkl
+data/*.npy
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+genetic_mcp_sessions.db
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# OS
+.DS_Store
+Thumbs.db
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# PyTorch
+*.pth
+*.pt
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
