@@ -974,9 +974,9 @@ def main():
             torch.cuda.empty_cache()
         gc.collect()
 
-        # 4c. Classical Multi-KRUM with Polynomial Features
-        print(f" Running Classical Multi-KRUM (Polynomial Features - {PROJECTION_DIM}D)...")
-        polynomial_features = polynomial_feature_map(client_updates, projection_dim=PROJECTION_DIM)
+        # 4c. Classical Multi-KRUM with Polynomial Features (applied to random projection)
+        print(f" Running Classical Multi-KRUM (Polynomial Features on Random Projection - {PROJECTION_DIM}D)...")
+        polynomial_features = polynomial_feature_map_from_matrix(random_projected_updates, projection_dim=PROJECTION_DIM)
         polynomial_selected = multi_krum(polynomial_features, NUM_BYZANTINE, DETECTION_NOISE)
         polynomial_metrics = calculate_metrics(polynomial_selected, NUM_HONEST, NUM_BYZANTINE)
         print(f"  Classical Polynomial Features (degree {POLY_DEGREE}, {PROJECTION_DIM}D) Selected: {len(polynomial_selected)} clients. Recall: {polynomial_metrics['Recall']:.4f}, F1: {polynomial_metrics['F1']:.4f}")
@@ -987,9 +987,9 @@ def main():
             torch.cuda.empty_cache()
         gc.collect()
 
-        # 4d. Classical Multi-KRUM with RBF Features
-        print(f" Running Classical Multi-KRUM (RBF Features - {PROJECTION_DIM}D)...")
-        rbf_features = rbf_feature_map(client_updates, n_components=PROJECTION_DIM)
+        # 4d. Classical Multi-KRUM with RBF Features (applied to random projection)
+        print(f" Running Classical Multi-KRUM (RBF Features on Random Projection - {PROJECTION_DIM}D)...")
+        rbf_features = rbf_feature_map_from_matrix(random_projected_updates, n_components=PROJECTION_DIM)
         rbf_selected = multi_krum(rbf_features, NUM_BYZANTINE, DETECTION_NOISE)
         rbf_metrics = calculate_metrics(rbf_selected, NUM_HONEST, NUM_BYZANTINE)
         print(f"  Classical RBF Features (gamma {RBF_GAMMA}, {PROJECTION_DIM}D) Selected: {len(rbf_selected)} clients. Recall: {rbf_metrics['Recall']:.4f}, F1: {rbf_metrics['F1']:.4f}")
@@ -1000,9 +1000,9 @@ def main():
             torch.cuda.empty_cache()
         gc.collect()
 
-        # 4e. Classical Multi-KRUM with Fourier Features
-        print(f" Running Classical Multi-KRUM (Fourier Features - {PROJECTION_DIM * 2}D)...")
-        fourier_features = fourier_feature_map(client_updates, n_components=PROJECTION_DIM)
+        # 4e. Classical Multi-KRUM with Fourier Features (applied to random projection)
+        print(f" Running Classical Multi-KRUM (Fourier Features on Random Projection - {PROJECTION_DIM * 2}D)...")
+        fourier_features = fourier_feature_map_from_matrix(random_projected_updates, n_components=PROJECTION_DIM)
         fourier_selected = multi_krum(fourier_features, NUM_BYZANTINE, DETECTION_NOISE)
         fourier_metrics = calculate_metrics(fourier_selected, NUM_HONEST, NUM_BYZANTINE)
         print(f"  Classical Fourier Features (sigma {FOURIER_SIGMA}, {fourier_features.shape[1]}D) Selected: {len(fourier_selected)} clients. Recall: {fourier_metrics['Recall']:.4f}, F1: {fourier_metrics['F1']:.4f}")
@@ -1345,6 +1345,148 @@ def fourier_feature_map(updates, n_components=None, sigma=None):
     
     # Compute features: [cos(X @ W + b), sin(X @ W + b)]
     projection = np.dot(update_matrix, random_weights) + random_bias
+    cos_features = np.cos(projection)
+    sin_features = np.sin(projection)
+    
+    # Concatenate cos and sin features
+    fourier_features = np.concatenate([cos_features, sin_features], axis=1)
+    
+    # Normalize appropriately
+    fourier_features = fourier_features / np.sqrt(n_components)
+    
+    print(f"Fourier features (sigma={sigma}): {update_matrix.shape} -> {fourier_features.shape}")
+    
+    return fourier_features
+
+# --- Classical Non-Linear Feature Maps for Matrix Input ---
+def polynomial_feature_map_from_matrix(update_matrix, degree=None, projection_dim=None):
+    """Apply polynomial feature transformation to already-projected update matrix.
+    
+    Args:
+        update_matrix: numpy array of shape (n_clients, projection_dim)
+        degree: Polynomial degree (uses POLY_DEGREE if None)
+        projection_dim: Target dimension for final projection (optional)
+    
+    Returns:
+        Transformed feature matrix
+    """
+    if degree is None:
+        degree = POLY_DEGREE
+    
+    # Improved normalization: standardize each feature dimension
+    update_std = np.std(update_matrix, axis=0, keepdims=True)
+    update_std = np.where(update_std < 1e-8, 1.0, update_std)
+    update_matrix_norm = update_matrix / update_std
+    
+    # Additional row-wise normalization to prevent overflow
+    row_norms = np.linalg.norm(update_matrix_norm, axis=1, keepdims=True)
+    row_norms = np.where(row_norms < 1e-8, 1.0, row_norms)
+    update_matrix_norm = update_matrix_norm / row_norms
+    
+    # Apply polynomial features
+    poly = PolynomialFeatures(degree=degree, include_bias=False, interaction_only=False)
+    poly_features = poly.fit_transform(update_matrix_norm)
+    
+    print(f"Polynomial features (degree {degree}): {update_matrix.shape} -> {poly_features.shape}")
+    
+    # Always project if we have more features than target dimension
+    if projection_dim is not None and poly_features.shape[1] > projection_dim:
+        # Importance-weighted random projection for better preservation
+        feature_importance = np.var(poly_features, axis=0)
+        feature_weights = feature_importance / (np.sum(feature_importance) + 1e-8)
+        
+        np.random.seed(SEED)  # Reproducible projection
+        projection_matrix = np.random.randn(poly_features.shape[1], projection_dim)
+        
+        # Weight the projection matrix
+        for i in range(poly_features.shape[1]):
+            projection_matrix[i, :] *= np.sqrt(feature_weights[i])
+        
+        # Normalize columns
+        for j in range(projection_dim):
+            col_norm = np.linalg.norm(projection_matrix[:, j])
+            if col_norm > 0:
+                projection_matrix[:, j] /= col_norm
+        
+        poly_features = np.dot(poly_features, projection_matrix)
+        print(f"Importance-weighted projected to: {poly_features.shape}")
+    
+    return poly_features
+
+def rbf_feature_map_from_matrix(update_matrix, gamma=None, n_components=None):
+    """Apply RBF feature transformation to already-projected update matrix.
+    
+    Args:
+        update_matrix: numpy array of shape (n_clients, projection_dim)
+        gamma: RBF kernel parameter (uses RBF_GAMMA if None)
+        n_components: Number of random features for approximation
+    
+    Returns:
+        RBF-transformed feature matrix
+    """
+    if gamma is None:
+        gamma = RBF_GAMMA
+    
+    original_dim = update_matrix.shape[1]
+    
+    # Normalize input data for stable RBF computation
+    update_mean = np.mean(update_matrix, axis=0, keepdims=True)
+    update_std = np.std(update_matrix, axis=0, keepdims=True)
+    update_std = np.where(update_std < 1e-8, 1.0, update_std)
+    update_matrix_norm = (update_matrix - update_mean) / update_std
+    
+    # Set default n_components if not provided
+    if n_components is None:
+        n_components = min(PROJECTION_DIM, original_dim)
+    
+    # Random Fourier Features approximation for RBF kernel
+    np.random.seed(SEED)  # For reproducibility
+    random_weights = np.random.normal(0, np.sqrt(2 * gamma), (original_dim, n_components))
+    random_bias = np.random.uniform(0, 2 * np.pi, n_components)
+    
+    # Compute random features: sqrt(2/n_components) * cos(X @ W + b)
+    projection = np.dot(update_matrix_norm, random_weights) + random_bias
+    rbf_features = np.sqrt(2.0 / n_components) * np.cos(projection)
+    
+    print(f"RBF features (gamma={gamma}): {update_matrix.shape} -> {rbf_features.shape}")
+    
+    return rbf_features
+
+def fourier_feature_map_from_matrix(update_matrix, n_components=None, sigma=None):
+    """Apply Fourier feature transformation to already-projected update matrix.
+    
+    Args:
+        update_matrix: numpy array of shape (n_clients, projection_dim)
+        n_components: Number of random Fourier components
+        sigma: Gaussian kernel bandwidth parameter (uses FOURIER_SIGMA if None)
+    
+    Returns:
+        Fourier-transformed feature matrix
+    """
+    if sigma is None:
+        sigma = FOURIER_SIGMA
+    
+    original_dim = update_matrix.shape[1]
+    
+    # Normalize input data for stable computation
+    update_mean = np.mean(update_matrix, axis=0, keepdims=True)
+    update_std = np.std(update_matrix, axis=0, keepdims=True)
+    update_std = np.where(update_std < 1e-8, 1.0, update_std)
+    update_matrix_norm = (update_matrix - update_mean) / update_std
+    
+    # Set default n_components if not provided
+    if n_components is None:
+        n_components = PROJECTION_DIM
+    
+    # Random Fourier Features for Gaussian RBF kernel
+    np.random.seed(SEED)  # For reproducibility
+    
+    # Sample random frequencies from Gaussian distribution
+    random_weights = np.random.normal(0, 1.0/sigma, (original_dim, n_components))
+    random_bias = np.random.uniform(0, 2 * np.pi, n_components)
+    
+    # Compute features: [cos(X @ W + b), sin(X @ W + b)]
+    projection = np.dot(update_matrix_norm, random_weights) + random_bias
     cos_features = np.cos(projection)
     sin_features = np.sin(projection)
     
