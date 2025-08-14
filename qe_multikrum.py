@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Simple end-to-end demonstration of Classical vs Quantum Projection for Byzantine detection
-# in Federated Learning with CIFAR-10 dataset
+# in Federated Learning with MNIST/CIFAR-10 datasets
 
 import numpy as np
 import torch
@@ -90,7 +90,18 @@ torch.manual_seed(SEED)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-# --- Data Loading (CIFAR-10) ---
+# --- Data Loading ---
+def load_mnist():
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,)) # MNIST normalization
+    ])
+    trainset = torchvision.datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+    testset = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform)
+    test_loader = DataLoader(testset, batch_size=128, shuffle=False)
+    print(f"Loaded MNIST: {len(trainset)} train, {len(testset)} test")
+    return trainset, test_loader
+
 def load_cifar10():
     transform = transforms.Compose([
         transforms.ToTensor(),
@@ -102,21 +113,47 @@ def load_cifar10():
     print(f"Loaded CIFAR-10: {len(trainset)} train, {len(testset)} test")
     return trainset, test_loader
 
-# --- Simple CNN Model (CIFAR-10) ---
+def load_dataset():
+    """Load dataset based on DATASET variable"""
+    if DATASET.lower() == 'mnist':
+        return load_mnist()
+    elif DATASET.lower() in ['cifar10', 'cifar-10', 'cifar']:
+        return load_cifar10()
+    else:
+        raise ValueError(f"Unknown dataset: {DATASET}")
+
+# --- Simple CNN Model ---
 class SimpleCNN(nn.Module):
-    def __init__(self):
+    def __init__(self, dataset_name='cifar10'):
         super(SimpleCNN, self).__init__()
-        self.conv1 = nn.Conv2d(3, 6, 5)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)
+        self.dataset_name = dataset_name.lower()
+        
+        if self.dataset_name == 'mnist':
+            # MNIST: 1 channel, 28x28 images
+            self.conv1 = nn.Conv2d(1, 6, 5)
+            self.pool = nn.MaxPool2d(2, 2)
+            self.conv2 = nn.Conv2d(6, 16, 5)
+            self.fc1 = nn.Linear(16 * 4 * 4, 120)  # 28x28 -> 24x24 -> 12x12 -> 8x8 -> 4x4
+        else:
+            # CIFAR-10: 3 channels, 32x32 images
+            self.conv1 = nn.Conv2d(3, 6, 5)
+            self.pool = nn.MaxPool2d(2, 2)
+            self.conv2 = nn.Conv2d(6, 16, 5)
+            self.fc1 = nn.Linear(16 * 5 * 5, 120)  # 32x32 -> 28x28 -> 14x14 -> 10x10 -> 5x5
+        
         self.fc2 = nn.Linear(120, 84)
         self.fc3 = nn.Linear(84, 10)
 
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
-        x = x.view(-1, 16 * 5 * 5)
+        
+        # Reshape based on dataset
+        if self.dataset_name == 'mnist':
+            x = x.view(-1, 16 * 4 * 4)  # MNIST: after pooling twice from 28x28
+        else:
+            x = x.view(-1, 16 * 5 * 5)  # CIFAR-10: after pooling twice from 32x32
+        
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
@@ -143,7 +180,7 @@ def partition_data(dataset, num_clients):
     return client_data_indices
 
 def train_client(model, dataloader, epochs, lr):
-    local_model = SimpleCNN().to(device) # Create a new instance
+    local_model = SimpleCNN(dataset_name=DATASET).to(device) # Create a new instance
     local_model.load_state_dict(model.state_dict()) # Copy weights
     optimizer = optim.SGD(local_model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
@@ -697,10 +734,19 @@ def visualize_results(attack_type):
         'classical_random': '#aec7e8',           # Light blue
         'classical_importance': '#ffbb78',       # Light orange
         
-        # Classical non-linear feature maps
-        'classical_polynomial': '#ff9999',       # Light red
-        'classical_rbf': '#66b3ff',             # Light blue
-        'classical_fourier': '#99ff99',         # Light green
+        # Classical non-linear feature maps with random projection
+        'classical_polynomial_random': '#ff9999',       # Light red
+        'classical_rbf_random': '#66b3ff',             # Light blue
+        'classical_fourier_random': '#99ff99',         # Light green
+        
+        # Classical non-linear feature maps with importance projection
+        'classical_polynomial_importance': '#cc6666',   # Dark red
+        'classical_rbf_importance': '#3366cc',         # Dark blue
+        'classical_fourier_importance': '#66cc66',     # Dark green
+
+        # Classical Embedding methods
+        'classical_embedding_random': '#e377c2',        # Pink
+        'classical_embedding_importance': '#bcbd22',    # Yellow-green
 
         # ZZ methods
         'quantum_zz_random': '#2ca02c',          # Green
@@ -721,10 +767,19 @@ def visualize_results(attack_type):
         'classical_random': f'Classical + Random Proj ({PROJECTION_DIM}D)',
         'classical_importance': f'Classical + Importance Proj ({PROJECTION_DIM}D)',
         
-        # Classical non-linear feature maps
-        'classical_polynomial': f'Classical + Polynomial Features ({PROJECTION_DIM}D)',
-        'classical_rbf': f'Classical + RBF Features ({PROJECTION_DIM}D)',
-        'classical_fourier': f'Classical + Fourier Features ({PROJECTION_DIM}D)',
+        # Classical non-linear feature maps with random projection
+        'classical_polynomial_random': f'Classical + Polynomial (Random {PROJECTION_DIM}D)',
+        'classical_rbf_random': f'Classical + RBF (Random {PROJECTION_DIM}D)',
+        'classical_fourier_random': f'Classical + Fourier (Random {PROJECTION_DIM}D)',
+        
+        # Classical non-linear feature maps with importance projection
+        'classical_polynomial_importance': f'Classical + Polynomial (Importance {PROJECTION_DIM}D)',
+        'classical_rbf_importance': f'Classical + RBF (Importance {PROJECTION_DIM}D)',
+        'classical_fourier_importance': f'Classical + Fourier (Importance {PROJECTION_DIM}D)',
+
+        # Classical Embedding methods
+        'classical_embedding_random': f'Classical Embedding + Random ({PROJECTION_DIM}D)',
+        'classical_embedding_importance': f'Classical Embedding + Importance ({PROJECTION_DIM}D)',
 
         # ZZ methods
         'quantum_zz_random': 'Quantum ZZ + Random',
@@ -831,6 +886,622 @@ def visualize_results(attack_type):
     plt.show()
 
     print("\nVisualization complete.")
+    
+    # Save results table to CSV
+    save_results_table(attack_type)
+
+def save_results_table(attack_type):
+    """Save comprehensive results table and display summary statistics"""
+    global results_df
+    
+    print("\n=== Saving Results Table ===")
+    
+    # Save complete results to CSV
+    csv_filename = f'results_table_{attack_type}.csv'
+    results_df.to_csv(csv_filename, index=False)
+    print(f"Complete results saved to: {csv_filename}")
+    
+    # Create summary statistics table
+    summary_df = results_df.groupby('Aggregator').agg({
+        'TP': 'mean',
+        'FN': 'mean',
+        'TN': 'mean',
+        'FP': 'mean',
+        'Byzantine_Rejection': 'mean',
+        'Honest_Retention': 'mean',
+        'F1_Score': 'mean',
+        'Test_Accuracy': 'mean'
+    }).round(4)
+    
+    # Save summary table
+    summary_filename = f'summary_table_{attack_type}.csv'
+    summary_df.to_csv(summary_filename)
+    print(f"Summary statistics saved to: {summary_filename}")
+    
+    # Display summary table
+    print("\n=== Average Performance Across All Rounds ===")
+    print(summary_df.to_string())
+    
+    # Create a bar chart comparing all methods
+    create_comprehensive_bar_chart(summary_df, attack_type)
+    
+    # Create the specific TP percentage comparison chart (like in the image)
+    create_tp_percentage_comparison_chart(summary_df, attack_type)
+    
+    # Create a bar chart for classical methods only
+    create_classical_methods_comparison_chart(summary_df, attack_type)
+
+def create_comprehensive_bar_chart(summary_df, attack_type):
+    """Create a comprehensive bar chart comparing all methods"""
+    
+    # Sort aggregators for better visualization
+    aggregator_order = [
+        'classical_standard',
+        'classical_random',
+        'classical_importance',
+        'classical_polynomial_random',
+        'classical_polynomial_importance',
+        'classical_rbf_random',
+        'classical_rbf_importance',
+        'classical_fourier_random',
+        'classical_fourier_importance',
+        'classical_embedding_random',
+        'classical_embedding_importance',
+        'quantum_zz_random',
+        'quantum_zz_importance',
+        'quantum_pauli_random',
+        'quantum_pauli_importance',
+        'quantum_heisenberg_random',
+        'quantum_heisenberg_importance'
+    ]
+    
+    # Filter to only include existing aggregators
+    existing_aggregators = [agg for agg in aggregator_order if agg in summary_df.index]
+    summary_df_sorted = summary_df.loc[existing_aggregators]
+    
+    # Create figure with subplots
+    fig, axes = plt.subplots(2, 2, figsize=(18, 12))
+    fig.suptitle(f'Method Comparison - {DATASET.upper()} ({attack_type})', fontsize=18)
+    
+    # Define colors for each aggregator
+    colors_list = ['#1f77b4', '#aec7e8', '#ffbb78', '#ff9999', '#66b3ff', '#99ff99',
+                   '#e377c2', '#bcbd22', '#2ca02c', '#98df8a', '#9467bd', '#c5b0d5',
+                   '#d62728', '#ff7f0e']
+    
+    # Plot 1: True Positive Rate (Byzantine Rejection)
+    ax1 = axes[0, 0]
+    tp_values = summary_df_sorted['TP'].values
+    x_pos = np.arange(len(existing_aggregators))
+    bars1 = ax1.bar(x_pos, tp_values, color=colors_list[:len(existing_aggregators)])
+    ax1.set_title('Average True Positives (Byzantine Correctly Rejected)', fontsize=14)
+    ax1.set_ylabel('Average TP Count', fontsize=12)
+    ax1.set_ylim(0, NUM_BYZANTINE + 0.5)
+    ax1.set_xticks(x_pos)
+    ax1.set_xticklabels([agg.replace('_', '\n') for agg in existing_aggregators], rotation=45, ha='right', fontsize=9)
+    ax1.grid(True, axis='y', alpha=0.3)
+    
+    # Add value labels on bars
+    for bar, val in zip(bars1, tp_values):
+        height = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2., height,
+                f'{val:.2f}', ha='center', va='bottom', fontsize=8)
+    
+    # Plot 2: F1 Score
+    ax2 = axes[0, 1]
+    f1_values = summary_df_sorted['F1_Score'].values
+    bars2 = ax2.bar(x_pos, f1_values, color=colors_list[:len(existing_aggregators)])
+    ax2.set_title('Average F1 Score', fontsize=14)
+    ax2.set_ylabel('F1 Score', fontsize=12)
+    ax2.set_ylim(0, 1.1)
+    ax2.set_xticks(x_pos)
+    ax2.set_xticklabels([agg.replace('_', '\n') for agg in existing_aggregators], rotation=45, ha='right', fontsize=9)
+    ax2.grid(True, axis='y', alpha=0.3)
+    
+    # Add value labels on bars
+    for bar, val in zip(bars2, f1_values):
+        height = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width()/2., height,
+                f'{val:.3f}', ha='center', va='bottom', fontsize=8)
+    
+    # Plot 3: Honest Retention
+    ax3 = axes[1, 0]
+    retention_values = summary_df_sorted['Honest_Retention'].values
+    bars3 = ax3.bar(x_pos, retention_values, color=colors_list[:len(existing_aggregators)])
+    ax3.set_title('Average Honest Client Retention', fontsize=14)
+    ax3.set_ylabel('Retention Rate', fontsize=12)
+    ax3.set_ylim(0, 1.1)
+    ax3.set_xticks(x_pos)
+    ax3.set_xticklabels([agg.replace('_', '\n') for agg in existing_aggregators], rotation=45, ha='right', fontsize=9)
+    ax3.grid(True, axis='y', alpha=0.3)
+    
+    # Add value labels on bars
+    for bar, val in zip(bars3, retention_values):
+        height = bar.get_height()
+        ax3.text(bar.get_x() + bar.get_width()/2., height,
+                f'{val:.3f}', ha='center', va='bottom', fontsize=8)
+    
+    # Plot 4: Test Accuracy
+    ax4 = axes[1, 1]
+    accuracy_values = summary_df_sorted['Test_Accuracy'].values
+    bars4 = ax4.bar(x_pos, accuracy_values, color=colors_list[:len(existing_aggregators)])
+    ax4.set_title('Average Test Accuracy', fontsize=14)
+    ax4.set_ylabel('Accuracy (%)', fontsize=12)
+    ax4.set_ylim(0, max(accuracy_values) + 5)
+    ax4.set_xticks(x_pos)
+    ax4.set_xticklabels([agg.replace('_', '\n') for agg in existing_aggregators], rotation=45, ha='right', fontsize=9)
+    ax4.grid(True, axis='y', alpha=0.3)
+    
+    # Add value labels on bars
+    for bar, val in zip(bars4, accuracy_values):
+        height = bar.get_height()
+        ax4.text(bar.get_x() + bar.get_width()/2., height,
+                f'{val:.1f}', ha='center', va='bottom', fontsize=8)
+    
+    plt.tight_layout()
+    
+    # Save the comprehensive bar chart
+    bar_chart_filename = f'comprehensive_bar_chart_{attack_type}.png'
+    plt.savefig(bar_chart_filename, dpi=300, bbox_inches='tight')
+    print(f"Comprehensive bar chart saved as: {bar_chart_filename}")
+    plt.show()
+
+def create_tp_percentage_comparison_chart(summary_df, attack_type):
+    """Create a bar chart showing average TP percentage for all methods (matching the provided image style)"""
+    
+    # Calculate TP percentage (TP / total byzantines * 100)
+    summary_df['TP_Percentage'] = (summary_df['TP'] / NUM_BYZANTINE) * 100
+    
+    # Define method groups and their display names
+    method_groups = {
+        'Classical Standard': ['classical_standard'],
+        'Classical + Random': ['classical_random'],
+        'Classical + Importance': ['classical_importance'],
+        'Classical Embedding': ['classical_embedding_random', 'classical_embedding_importance'],
+        'Heisenberg + Random': ['quantum_heisenberg_random'],
+        'Heisenberg + Importance': ['quantum_heisenberg_importance'],
+        'Pauli + Random': ['quantum_pauli_random'],
+        'Pauli + Importance': ['quantum_pauli_importance'],
+        'ZZ + Random': ['quantum_zz_random'],
+        'ZZ + Importance': ['quantum_zz_importance']
+    }
+    
+    # Prepare data for plotting
+    methods = []
+    tp_percentages = []
+    colors = []
+    
+    # Color scheme matching the original image
+    color_map = {
+        'Classical Standard': '#20639B',  # Dark blue
+        'Classical + Random': '#3CAEA3',  # Teal
+        'Classical + Importance': '#F6D55C',  # Yellow
+        'Classical Embedding': '#ED553B',  # Red-orange
+        'Heisenberg': '#173F5F',  # Navy
+        'Pauli': '#20639B',  # Blue
+        'ZZ': '#3CAEA3'  # Teal
+    }
+    
+    # Process each method group
+    for group_name, aggregators in method_groups.items():
+        for agg in aggregators:
+            if agg in summary_df.index:
+                methods.append(group_name)
+                tp_percentages.append(summary_df.loc[agg, 'TP_Percentage'])
+                
+                # Assign color based on method type
+                if 'Classical' in group_name:
+                    if 'Standard' in group_name:
+                        colors.append('#1f77b4')  # Blue
+                    elif 'Random' in group_name:
+                        colors.append('#ff7f0e')  # Orange
+                    elif 'Importance' in group_name:
+                        colors.append('#2ca02c')  # Green
+                    elif 'Embedding' in group_name:
+                        if 'random' in agg:
+                            colors.append('#d62728')  # Red
+                        else:
+                            colors.append('#9467bd')  # Purple
+                elif 'Heisenberg' in group_name:
+                    colors.append('#8c564b')  # Brown
+                elif 'Pauli' in group_name:
+                    colors.append('#e377c2')  # Pink
+                elif 'ZZ' in group_name:
+                    colors.append('#7f7f7f')  # Gray
+    
+    # Create the plot
+    plt.figure(figsize=(16, 10))
+    
+    x_pos = np.arange(len(methods))
+    bars = plt.bar(x_pos, tp_percentages, color=colors, edgecolor='black', linewidth=1.5)
+    
+    # Customize the plot
+    plt.title(f'{DATASET.upper()}: Average TP Percentage by Method\n({attack_type})', fontsize=20, fontweight='bold')
+    plt.xlabel('Method', fontsize=16, fontweight='bold')
+    plt.ylabel('Avg True Positive (TP) Rate', fontsize=16, fontweight='bold')
+    
+    # Set x-axis labels
+    plt.xticks(x_pos, methods, rotation=45, ha='right', fontsize=12)
+    
+    # Add grid
+    plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+    
+    # Set y-axis limits
+    plt.ylim(0, 105)
+    
+    # Add value labels on top of bars
+    for bar, val in zip(bars, tp_percentages):
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2., height + 1,
+                f'{val:.1f}%', ha='center', va='bottom', fontsize=11, fontweight='bold')
+    
+    # Add horizontal line at 100%
+    plt.axhline(y=100, color='red', linestyle='--', alpha=0.5, linewidth=2)
+    
+    # Add legend explaining the groups
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor='#1f77b4', label='Classical Standard'),
+        Patch(facecolor='#ff7f0e', label='Classical + Projection'),
+        Patch(facecolor='#d62728', label='Classical Embedding'),
+        Patch(facecolor='#8c564b', label='Quantum Heisenberg'),
+        Patch(facecolor='#e377c2', label='Quantum Pauli'),
+        Patch(facecolor='#7f7f7f', label='Quantum ZZ')
+    ]
+    plt.legend(handles=legend_elements, loc='upper right', fontsize=11)
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    tp_comparison_filename = f'{DATASET}_tp_percentage_comparison_{attack_type}.png'
+    plt.savefig(tp_comparison_filename, dpi=300, bbox_inches='tight')
+    print(f"TP Percentage comparison chart saved as: {tp_comparison_filename}")
+    plt.show()
+    
+    # Also create a grouped bar chart similar to the original image
+    create_grouped_tp_comparison_chart(summary_df, attack_type)
+
+def create_grouped_tp_comparison_chart(summary_df, attack_type):
+    """Create a grouped bar chart showing TP percentage for all methods grouped by approach"""
+    
+    # Calculate TP percentage
+    summary_df['TP_Percentage'] = (summary_df['TP'] / NUM_BYZANTINE) * 100
+    
+    # Determine best classical embedding method
+    classical_embedding_methods = ['classical_embedding_random', 'classical_embedding_importance']
+    best_embedding = None
+    best_embedding_score = -1
+    
+    for method in classical_embedding_methods:
+        if method in summary_df.index:
+            score = summary_df.loc[method, 'TP_Percentage']
+            if score > best_embedding_score:
+                best_embedding_score = score
+                best_embedding = method
+    
+    # Define the groups and methods
+    groups = {
+        'Classical\nStandard': ['classical_standard'],
+        'Classical\nRandom': ['classical_random'],
+        'Classical\nImportance': ['classical_importance'],
+        'Classical\nEmbedding': [best_embedding] if best_embedding else [],
+        'Heisenberg': ['quantum_heisenberg_random', 'quantum_heisenberg_importance'],
+        'Pauli': ['quantum_pauli_random', 'quantum_pauli_importance'],
+        'ZZ': ['quantum_zz_random', 'quantum_zz_importance']
+    }
+    
+    # Prepare data
+    group_names = list(groups.keys())
+    x_pos = np.arange(len(group_names))
+    width = 0.35
+    
+    fig, ax = plt.subplots(figsize=(14, 8))
+    
+    # Colors for random vs importance
+    colors_random = '#3498db'  # Blue
+    colors_importance = '#e74c3c'  # Red
+    
+    # Plot bars for each group
+    for i, (group_name, methods) in enumerate(groups.items()):
+        if not methods:  # Skip empty groups
+            continue
+            
+        if len(methods) == 1:
+            # Single bar for this group
+            if methods[0] and methods[0] in summary_df.index:
+                value = summary_df.loc[methods[0], 'TP_Percentage']
+                # Choose color based on the group
+                if 'Standard' in group_name:
+                    bar_color = '#2ecc71'  # Green
+                elif 'Random' in group_name and 'Classical' in group_name:
+                    bar_color = '#3498db'  # Blue
+                elif 'Importance' in group_name and 'Classical' in group_name:
+                    bar_color = '#e74c3c'  # Red
+                elif 'Embedding' in group_name:
+                    # Use color based on which embedding performed best
+                    if best_embedding and 'random' in best_embedding:
+                        bar_color = '#e377c2'  # Pink for random
+                        label_suffix = ' (Random)'
+                    else:
+                        bar_color = '#bcbd22'  # Yellow-green for importance
+                        label_suffix = ' (Importance)'
+                    # Add suffix to show which was selected
+                    if i < len(group_names):
+                        group_names[i] = group_names[i].replace('\n', f'{label_suffix}\n')
+                else:
+                    bar_color = '#2ecc71'  # Default green
+                    
+                ax.bar(x_pos[i], value, width*2, 
+                      color=bar_color, edgecolor='black', linewidth=1.5)
+                # Add value label
+                ax.text(x_pos[i], value + 1, f'{value:.1f}%', 
+                       ha='center', va='bottom', fontsize=10, fontweight='bold')
+        else:
+            # Two bars for random and importance
+            offset = 0
+            for j, method in enumerate(methods):
+                if method in summary_df.index:
+                    value = summary_df.loc[method, 'TP_Percentage']
+                    color = colors_random if 'random' in method else colors_importance
+                    label = 'Random' if j == 0 and i == 4 else ('Importance' if j == 1 and i == 4 else "")
+                    ax.bar(x_pos[i] + (j - 0.5) * width, value, width, 
+                          label=label, color=color, edgecolor='black', linewidth=1.5)
+                    # Add value label
+                    ax.text(x_pos[i] + (j - 0.5) * width, value + 1, f'{value:.1f}%', 
+                           ha='center', va='bottom', fontsize=9)
+    
+    # Customize the plot
+    title_text = f'{DATASET.upper()}: Average TP Percentage by Method and Projection Type\n({attack_type})'
+    if best_embedding:
+        embedding_type = 'Random' if 'random' in best_embedding else 'Importance'
+        title_text += f'\n(Classical Embedding: Best performer = {embedding_type}, TP={best_embedding_score:.1f}%)'
+    ax.set_title(title_text, fontsize=16, fontweight='bold')
+    ax.set_xlabel('Method', fontsize=14, fontweight='bold')
+    ax.set_ylabel('Avg True Positive (TP) Rate (%)', fontsize=14, fontweight='bold')
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(group_names, fontsize=12)
+    ax.set_ylim(0, 105)
+    ax.grid(True, axis='y', linestyle='--', alpha=0.5)
+    
+    # Add horizontal line at 100%
+    ax.axhline(y=100, color='red', linestyle='--', alpha=0.5, linewidth=2)
+    
+    # Add legend
+    ax.legend(loc='upper left', fontsize=11)
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    grouped_filename = f'{DATASET}_grouped_tp_comparison_{attack_type}.png'
+    plt.savefig(grouped_filename, dpi=300, bbox_inches='tight')
+    print(f"Grouped TP comparison chart saved as: {grouped_filename}")
+    plt.show()
+
+def create_classical_methods_comparison_chart(summary_df, attack_type):
+    """Create a bar chart comparing only classical methods"""
+    
+    # Calculate TP percentage
+    summary_df['TP_Percentage'] = (summary_df['TP'] / NUM_BYZANTINE) * 100
+    
+    # Define classical methods and their display names
+    classical_methods = {
+        'Classical Standard\n(No Projection)': 'classical_standard',
+        'Classical +\nRandom Projection': 'classical_random',
+        'Classical +\nImportance Projection': 'classical_importance',
+        'Classical Polynomial\n(Random)': 'classical_polynomial_random',
+        'Classical Polynomial\n(Importance)': 'classical_polynomial_importance',
+        'Classical RBF\n(Random)': 'classical_rbf_random',
+        'Classical RBF\n(Importance)': 'classical_rbf_importance',
+        'Classical Fourier\n(Random)': 'classical_fourier_random',
+        'Classical Fourier\n(Importance)': 'classical_fourier_importance',
+        'Classical Embedding\n(Random)': 'classical_embedding_random',
+        'Classical Embedding\n(Importance)': 'classical_embedding_importance'
+    }
+    
+    # Prepare data
+    methods = []
+    tp_percentages = []
+    f1_scores = []
+    retention_rates = []
+    colors = []
+    
+    # Color scheme for classical methods
+    color_scheme = {
+        'standard': '#1f77b4',              # Blue
+        'random': '#ff7f0e',                # Orange
+        'importance': '#2ca02c',            # Green
+        'polynomial_random': '#ff9999',     # Light red
+        'polynomial_importance': '#cc6666', # Dark red
+        'rbf_random': '#66b3ff',           # Light blue
+        'rbf_importance': '#3366cc',       # Dark blue
+        'fourier_random': '#99ff99',       # Light green
+        'fourier_importance': '#66cc66',   # Dark green
+        'embedding_random': '#e377c2',     # Pink
+        'embedding_importance': '#bcbd22'  # Yellow-green
+    }
+    
+    # Process each method
+    for display_name, method_key in classical_methods.items():
+        if method_key in summary_df.index:
+            methods.append(display_name)
+            tp_percentages.append(summary_df.loc[method_key, 'TP_Percentage'])
+            f1_scores.append(summary_df.loc[method_key, 'F1_Score'])
+            retention_rates.append(summary_df.loc[method_key, 'Honest_Retention'])
+            
+            # Assign color
+            if 'standard' in method_key:
+                colors.append(color_scheme['standard'])
+            elif 'embedding_random' in method_key:
+                colors.append(color_scheme['embedding_random'])
+            elif 'embedding_importance' in method_key:
+                colors.append(color_scheme['embedding_importance'])
+            elif 'polynomial_random' in method_key:
+                colors.append(color_scheme['polynomial_random'])
+            elif 'polynomial_importance' in method_key:
+                colors.append(color_scheme['polynomial_importance'])
+            elif 'rbf_random' in method_key:
+                colors.append(color_scheme['rbf_random'])
+            elif 'rbf_importance' in method_key:
+                colors.append(color_scheme['rbf_importance'])
+            elif 'fourier_random' in method_key:
+                colors.append(color_scheme['fourier_random'])
+            elif 'fourier_importance' in method_key:
+                colors.append(color_scheme['fourier_importance'])
+            elif method_key == 'classical_random':
+                colors.append(color_scheme['random'])
+            elif method_key == 'classical_importance':
+                colors.append(color_scheme['importance'])
+    
+    # Create figure with subplots
+    fig, axes = plt.subplots(1, 3, figsize=(20, 7))
+    fig.suptitle(f'Classical Methods Comparison - {DATASET.upper()} ({attack_type})', fontsize=20, fontweight='bold')
+    
+    x_pos = np.arange(len(methods))
+    
+    # Plot 1: TP Percentage
+    ax1 = axes[0]
+    bars1 = ax1.bar(x_pos, tp_percentages, color=colors, edgecolor='black', linewidth=1.5)
+    ax1.set_title('Average True Positive Rate', fontsize=16, fontweight='bold')
+    ax1.set_ylabel('TP Rate (%)', fontsize=14)
+    ax1.set_ylim(0, 105)
+    ax1.set_xticks(x_pos)
+    ax1.set_xticklabels(methods, rotation=45, ha='right', fontsize=10)
+    ax1.grid(True, axis='y', linestyle='--', alpha=0.5)
+    ax1.axhline(y=100, color='red', linestyle='--', alpha=0.5, linewidth=2)
+    
+    # Add value labels
+    for bar, val in zip(bars1, tp_percentages):
+        height = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2., height + 1,
+                f'{val:.1f}%', ha='center', va='bottom', fontsize=9, fontweight='bold')
+    
+    # Plot 2: F1 Score
+    ax2 = axes[1]
+    bars2 = ax2.bar(x_pos, f1_scores, color=colors, edgecolor='black', linewidth=1.5)
+    ax2.set_title('Average F1 Score', fontsize=16, fontweight='bold')
+    ax2.set_ylabel('F1 Score', fontsize=14)
+    ax2.set_ylim(0, 1.1)
+    ax2.set_xticks(x_pos)
+    ax2.set_xticklabels(methods, rotation=45, ha='right', fontsize=10)
+    ax2.grid(True, axis='y', linestyle='--', alpha=0.5)
+    
+    # Add value labels
+    for bar, val in zip(bars2, f1_scores):
+        height = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                f'{val:.3f}', ha='center', va='bottom', fontsize=9, fontweight='bold')
+    
+    # Plot 3: Honest Retention
+    ax3 = axes[2]
+    bars3 = ax3.bar(x_pos, retention_rates, color=colors, edgecolor='black', linewidth=1.5)
+    ax3.set_title('Average Honest Client Retention', fontsize=16, fontweight='bold')
+    ax3.set_ylabel('Retention Rate', fontsize=14)
+    ax3.set_ylim(0, 1.1)
+    ax3.set_xticks(x_pos)
+    ax3.set_xticklabels(methods, rotation=45, ha='right', fontsize=10)
+    ax3.grid(True, axis='y', linestyle='--', alpha=0.5)
+    ax3.axhline(y=1.0, color='green', linestyle='--', alpha=0.5, linewidth=2)
+    
+    # Add value labels
+    for bar, val in zip(bars3, retention_rates):
+        height = bar.get_height()
+        ax3.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                f'{val:.3f}', ha='center', va='bottom', fontsize=9, fontweight='bold')
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    classical_filename = f'classical_methods_comparison_{attack_type}.png'
+    plt.savefig(classical_filename, dpi=300, bbox_inches='tight')
+    print(f"Classical methods comparison chart saved as: {classical_filename}")
+    plt.show()
+    
+    # Also create a single comprehensive bar chart for classical methods
+    create_classical_single_chart(summary_df, attack_type)
+
+def create_classical_single_chart(summary_df, attack_type):
+    """Create a single bar chart focusing on TP percentage for classical methods only"""
+    
+    # Calculate TP percentage
+    summary_df['TP_Percentage'] = (summary_df['TP'] / NUM_BYZANTINE) * 100
+    
+    # Define classical methods with intuitive labels
+    classical_methods = [
+        ('Standard\nNo Projection', 'classical_standard'),
+        ('Standard\nRandom Projection', 'classical_random'),
+        ('Standard\nImportance Projection', 'classical_importance'),
+        ('Polynomial Embeddings\nRandom', 'classical_polynomial_random'),
+        ('Polynomial Embeddings\nImportance', 'classical_polynomial_importance'),
+        ('RBF Embeddings\nRandom', 'classical_rbf_random'),
+        ('RBF Embeddings\nImportance', 'classical_rbf_importance'),
+        ('Fourier Embeddings\nRandom', 'classical_fourier_random'),
+        ('Fourier Embeddings\nImportance', 'classical_fourier_importance'),
+        ('Classical Embeddings\nRandom', 'classical_embedding_random'),
+        ('Classical Embeddings\nImportance', 'classical_embedding_importance')
+    ]
+    
+    # Prepare data
+    methods = []
+    tp_percentages = []
+    
+    for display_name, method_key in classical_methods:
+        if method_key in summary_df.index:
+            methods.append(display_name)
+            tp_percentages.append(summary_df.loc[method_key, 'TP_Percentage'])
+    
+    # Create figure and axis
+    _, ax = plt.subplots(figsize=(14, 8))
+    
+    # Create bar positions
+    x_pos = np.arange(len(methods))
+    width = 0.7
+    
+    # Create bars with green color (27D style)
+    bars = ax.bar(x_pos, tp_percentages, width, color='#2ca02c', edgecolor='black', linewidth=0.5)
+    
+    # Add value labels on top of bars
+    for bar, value in zip(bars, tp_percentages):
+        if value > 0.5:  # Only show label if value is meaningful
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                    f'{value:.1f}', ha='center', va='bottom', fontsize=10)
+    
+    # Customize the plot
+    ax.set_xlabel('Classical Method', fontsize=14)
+    ax.set_ylabel('Avg True Positive (TP) Rate', fontsize=14)
+    ax.set_title(f'{DATASET.upper()}: Average TP Percentage by Classical Method (27D) - {attack_type}', 
+                fontsize=16, fontweight='bold')
+    
+    # Set x-axis labels with rotation
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(methods, fontsize=11, rotation=45, ha='right')
+    
+    # Set y-axis range and grid
+    max_tp = max(tp_percentages) if tp_percentages else 10
+    ax.set_ylim(0, max(max_tp * 1.2, 15))  # Dynamic scale with minimum
+    ax.yaxis.grid(True, linestyle='--', alpha=0.7)
+    ax.set_axisbelow(True)
+    
+    # Add horizontal grid lines
+    y_max = max(max_tp * 1.2, 15)
+    for y in range(0, int(y_max) + 1, 5):
+        ax.axhline(y=y, color='gray', linestyle='--', alpha=0.3, linewidth=0.5)
+    
+    # Remove top and right spines
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    # Highlight best performing method if significant
+    if tp_percentages and max(tp_percentages) > 0:
+        best_idx = np.argmax(tp_percentages)
+        bars[best_idx].set_edgecolor('gold')
+        bars[best_idx].set_linewidth(2)
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    single_filename = f'classical_methods_tp_comparison_{attack_type}.png'
+    plt.savefig(single_filename, dpi=300, bbox_inches='tight')
+    print(f"Classical methods TP comparison chart saved as: {single_filename}")
+    plt.show()
 
 # --- Metrics and Aggregation ---
 def calculate_metrics(selected_indices, num_honest, num_byzantine):
@@ -889,8 +1560,8 @@ def main():
     print(f" Attack: {BYZANTINE_ATTACK}, Projection: {PROJECTION_METHOD}({PROJECTION_DIM}D)")
     print(f" Classical Noise: {DETECTION_NOISE}")
 
-    trainset, test_loader = load_cifar10()
-    global_model = SimpleCNN().to(device)
+    trainset, test_loader = load_dataset()
+    global_model = SimpleCNN(dataset_name=DATASET).to(device)
     global_weights = global_model.get_weights() # Keep global weights on CPU
 
     client_indices = partition_data(trainset, NUM_HONEST)
@@ -976,39 +1647,78 @@ def main():
 
         # 4c. Classical Multi-KRUM with Polynomial Features (applied to random projection)
         print(f" Running Classical Multi-KRUM (Polynomial Features on Random Projection - {PROJECTION_DIM}D)...")
-        polynomial_features = polynomial_feature_map_from_matrix(random_projected_updates, projection_dim=PROJECTION_DIM)
-        polynomial_selected = multi_krum(polynomial_features, NUM_BYZANTINE, DETECTION_NOISE)
-        polynomial_metrics = calculate_metrics(polynomial_selected, NUM_HONEST, NUM_BYZANTINE)
-        print(f"  Classical Polynomial Features (degree {POLY_DEGREE}, {PROJECTION_DIM}D) Selected: {len(polynomial_selected)} clients. Recall: {polynomial_metrics['Recall']:.4f}, F1: {polynomial_metrics['F1']:.4f}")
+        polynomial_random_features = polynomial_feature_map_from_matrix(random_projected_updates, projection_dim=PROJECTION_DIM)
+        polynomial_random_selected = multi_krum(polynomial_random_features, NUM_BYZANTINE, DETECTION_NOISE)
+        polynomial_random_metrics = calculate_metrics(polynomial_random_selected, NUM_HONEST, NUM_BYZANTINE)
+        print(f"  Classical Polynomial Features Random (degree {POLY_DEGREE}, {PROJECTION_DIM}D) Selected: {len(polynomial_random_selected)} clients. Recall: {polynomial_random_metrics['Recall']:.4f}, F1: {polynomial_random_metrics['F1']:.4f}")
 
         # Memory cleanup after polynomial features
-        del polynomial_features
+        del polynomial_random_features
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
 
-        # 4d. Classical Multi-KRUM with RBF Features (applied to random projection)
+        # 4d. Classical Multi-KRUM with Polynomial Features (applied to importance projection)
+        print(f" Running Classical Multi-KRUM (Polynomial Features on Importance Projection - {PROJECTION_DIM}D)...")
+        polynomial_importance_features = polynomial_feature_map_from_matrix(importance_projected_updates, projection_dim=PROJECTION_DIM)
+        polynomial_importance_selected = multi_krum(polynomial_importance_features, NUM_BYZANTINE, DETECTION_NOISE)
+        polynomial_importance_metrics = calculate_metrics(polynomial_importance_selected, NUM_HONEST, NUM_BYZANTINE)
+        print(f"  Classical Polynomial Features Importance (degree {POLY_DEGREE}, {PROJECTION_DIM}D) Selected: {len(polynomial_importance_selected)} clients. Recall: {polynomial_importance_metrics['Recall']:.4f}, F1: {polynomial_importance_metrics['F1']:.4f}")
+
+        # Memory cleanup after polynomial features
+        del polynomial_importance_features
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+
+        # 4e. Classical Multi-KRUM with RBF Features (applied to random projection)
         print(f" Running Classical Multi-KRUM (RBF Features on Random Projection - {PROJECTION_DIM}D)...")
-        rbf_features = rbf_feature_map_from_matrix(random_projected_updates, n_components=PROJECTION_DIM)
-        rbf_selected = multi_krum(rbf_features, NUM_BYZANTINE, DETECTION_NOISE)
-        rbf_metrics = calculate_metrics(rbf_selected, NUM_HONEST, NUM_BYZANTINE)
-        print(f"  Classical RBF Features (gamma {RBF_GAMMA}, {PROJECTION_DIM}D) Selected: {len(rbf_selected)} clients. Recall: {rbf_metrics['Recall']:.4f}, F1: {rbf_metrics['F1']:.4f}")
+        rbf_random_features = rbf_feature_map_from_matrix(random_projected_updates, n_components=PROJECTION_DIM)
+        rbf_random_selected = multi_krum(rbf_random_features, NUM_BYZANTINE, DETECTION_NOISE)
+        rbf_random_metrics = calculate_metrics(rbf_random_selected, NUM_HONEST, NUM_BYZANTINE)
+        print(f"  Classical RBF Features Random (gamma {RBF_GAMMA}, {PROJECTION_DIM}D) Selected: {len(rbf_random_selected)} clients. Recall: {rbf_random_metrics['Recall']:.4f}, F1: {rbf_random_metrics['F1']:.4f}")
 
         # Memory cleanup after RBF features
-        del rbf_features
+        del rbf_random_features
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
 
-        # 4e. Classical Multi-KRUM with Fourier Features (applied to random projection)
+        # 4f. Classical Multi-KRUM with RBF Features (applied to importance projection)
+        print(f" Running Classical Multi-KRUM (RBF Features on Importance Projection - {PROJECTION_DIM}D)...")
+        rbf_importance_features = rbf_feature_map_from_matrix(importance_projected_updates, n_components=PROJECTION_DIM)
+        rbf_importance_selected = multi_krum(rbf_importance_features, NUM_BYZANTINE, DETECTION_NOISE)
+        rbf_importance_metrics = calculate_metrics(rbf_importance_selected, NUM_HONEST, NUM_BYZANTINE)
+        print(f"  Classical RBF Features Importance (gamma {RBF_GAMMA}, {PROJECTION_DIM}D) Selected: {len(rbf_importance_selected)} clients. Recall: {rbf_importance_metrics['Recall']:.4f}, F1: {rbf_importance_metrics['F1']:.4f}")
+
+        # Memory cleanup after RBF features
+        del rbf_importance_features
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+
+        # 4g. Classical Multi-KRUM with Fourier Features (applied to random projection)
         print(f" Running Classical Multi-KRUM (Fourier Features on Random Projection - {PROJECTION_DIM * 2}D)...")
-        fourier_features = fourier_feature_map_from_matrix(random_projected_updates, n_components=PROJECTION_DIM)
-        fourier_selected = multi_krum(fourier_features, NUM_BYZANTINE, DETECTION_NOISE)
-        fourier_metrics = calculate_metrics(fourier_selected, NUM_HONEST, NUM_BYZANTINE)
-        print(f"  Classical Fourier Features (sigma {FOURIER_SIGMA}, {fourier_features.shape[1]}D) Selected: {len(fourier_selected)} clients. Recall: {fourier_metrics['Recall']:.4f}, F1: {fourier_metrics['F1']:.4f}")
+        fourier_random_features = fourier_feature_map_from_matrix(random_projected_updates, n_components=PROJECTION_DIM)
+        fourier_random_selected = multi_krum(fourier_random_features, NUM_BYZANTINE, DETECTION_NOISE)
+        fourier_random_metrics = calculate_metrics(fourier_random_selected, NUM_HONEST, NUM_BYZANTINE)
+        print(f"  Classical Fourier Features Random (sigma {FOURIER_SIGMA}, {fourier_random_features.shape[1]}D) Selected: {len(fourier_random_selected)} clients. Recall: {fourier_random_metrics['Recall']:.4f}, F1: {fourier_random_metrics['F1']:.4f}")
 
         # Memory cleanup after Fourier features
-        del fourier_features
+        del fourier_random_features
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+
+        # 4h. Classical Multi-KRUM with Fourier Features (applied to importance projection)
+        print(f" Running Classical Multi-KRUM (Fourier Features on Importance Projection - {PROJECTION_DIM * 2}D)...")
+        fourier_importance_features = fourier_feature_map_from_matrix(importance_projected_updates, n_components=PROJECTION_DIM)
+        fourier_importance_selected = multi_krum(fourier_importance_features, NUM_BYZANTINE, DETECTION_NOISE)
+        fourier_importance_metrics = calculate_metrics(fourier_importance_selected, NUM_HONEST, NUM_BYZANTINE)
+        print(f"  Classical Fourier Features Importance (sigma {FOURIER_SIGMA}, {fourier_importance_features.shape[1]}D) Selected: {len(fourier_importance_selected)} clients. Recall: {fourier_importance_metrics['Recall']:.4f}, F1: {fourier_importance_metrics['F1']:.4f}")
+
+        # Memory cleanup after Fourier features
+        del fourier_importance_features
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
@@ -1091,6 +1801,32 @@ def main():
             torch.cuda.empty_cache()
         gc.collect()
 
+        # 8a. Classical Embedding with Random Projection
+        print(f" Running Classical Embedding Multi-KRUM (Random Projection - {PROJECTION_DIM}D)...")
+        classical_random_embeddings = classical_embedding(random_projected_updates, PROJECTION_DIM)
+        classical_random_selected = distance_multikrum_selector(classical_random_embeddings, NUM_BYZANTINE)
+        classical_random_metrics = calculate_metrics(classical_random_selected, NUM_HONEST, NUM_BYZANTINE)
+        print(f"  Classical Embedding Random Selected: {len(classical_random_selected)} clients. Recall: {classical_random_metrics['Recall']:.4f}, F1: {classical_random_metrics['F1']:.4f}")
+
+        # Delete embeddings and clean memory
+        del classical_random_embeddings
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+
+        # 8b. Classical Embedding with Importance Projection
+        print(f" Running Classical Embedding Multi-KRUM (Importance Projection - {PROJECTION_DIM}D)...")
+        classical_importance_embeddings = classical_embedding(importance_projected_updates, PROJECTION_DIM)
+        classical_importance_selected = distance_multikrum_selector(classical_importance_embeddings, NUM_BYZANTINE)
+        classical_importance_metrics = calculate_metrics(classical_importance_selected, NUM_HONEST, NUM_BYZANTINE)
+        print(f"  Classical Embedding Importance Selected: {len(classical_importance_selected)} clients. Recall: {classical_importance_metrics['Recall']:.4f}, F1: {classical_importance_metrics['F1']:.4f}")
+
+        # Delete embeddings and clean memory
+        del classical_importance_embeddings
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+
         # Delete projected updates to free up memory
         del random_projected_updates
         del importance_projected_updates
@@ -1098,26 +1834,31 @@ def main():
             torch.cuda.empty_cache()
         gc.collect()
 
-        # 8. Aggregate using Standard Multi-KRUM results & Update Global Model
+        # 9. Aggregate using Standard Multi-KRUM results & Update Global Model
         print(" Aggregating using Standard Multi-KRUM selected clients...")
         global_weights = aggregate_updates(client_updates, standard_selected, global_weights)
         global_model.set_weights(global_weights)
 
-        # 9. Test Model Accuracy
+        # 10. Test Model Accuracy
         current_accuracy = test_model(global_model, test_loader)
         print(f" Round {round_num + 1} Test Accuracy: {current_accuracy:.2f}%")
 
-        # 10. Log Results for all methods
+        # 11. Log Results for all methods
         log_results(round_num, 'classical_standard', standard_metrics, standard_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
 
         # Classical with different projections
         log_results(round_num, 'classical_random', random_classical_metrics, random_classical_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
         log_results(round_num, 'classical_importance', importance_classical_metrics, importance_classical_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
         
-        # Classical non-linear feature maps
-        log_results(round_num, 'classical_polynomial', polynomial_metrics, polynomial_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
-        log_results(round_num, 'classical_rbf', rbf_metrics, rbf_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
-        log_results(round_num, 'classical_fourier', fourier_metrics, fourier_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
+        # Classical non-linear feature maps with random projection
+        log_results(round_num, 'classical_polynomial_random', polynomial_random_metrics, polynomial_random_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
+        log_results(round_num, 'classical_rbf_random', rbf_random_metrics, rbf_random_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
+        log_results(round_num, 'classical_fourier_random', fourier_random_metrics, fourier_random_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
+        
+        # Classical non-linear feature maps with importance projection
+        log_results(round_num, 'classical_polynomial_importance', polynomial_importance_metrics, polynomial_importance_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
+        log_results(round_num, 'classical_rbf_importance', rbf_importance_metrics, rbf_importance_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
+        log_results(round_num, 'classical_fourier_importance', fourier_importance_metrics, fourier_importance_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
 
         # ZZ with different projections
         log_results(round_num, 'quantum_zz_random', zz_random_metrics, zz_random_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
@@ -1130,6 +1871,10 @@ def main():
         # Heisenberg with different projections
         log_results(round_num, 'quantum_heisenberg_random', heisenberg_random_metrics, heisenberg_random_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
         log_results(round_num, 'quantum_heisenberg_importance', heisenberg_importance_metrics, heisenberg_importance_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
+
+        # Classical Embedding with different projections
+        log_results(round_num, 'classical_embedding_random', classical_random_metrics, classical_random_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
+        log_results(round_num, 'classical_embedding_importance', classical_importance_metrics, classical_importance_selected, current_accuracy, NUM_BYZANTINE, BYZANTINE_ATTACK)
 
         round_time = time.time() - round_start_time
         print(f" Round {round_num + 1} finished in {round_time:.2f}s")
@@ -1357,6 +2102,84 @@ def fourier_feature_map(updates, n_components=None, sigma=None):
     print(f"Fourier features (sigma={sigma}): {update_matrix.shape} -> {fourier_features.shape}")
     
     return fourier_features
+
+# --- Classical Embedding Method ---
+def classical_embedding(projected_grads, embedding_dim=None):
+    """Apply classical embedding transformation to projected gradients.
+    
+    This method creates a classical embedding that mimics quantum-like behavior
+    through non-linear transformations and entanglement-like correlations.
+    
+    Args:
+        projected_grads: numpy array of shape (n_clients, projection_dim)
+        embedding_dim: Target embedding dimension (uses PROJECTION_DIM if None)
+    
+    Returns:
+        Dictionary with 'embeddings' and 'basis_states' for compatibility
+    """
+    n_clients, proj_dim = projected_grads.shape
+    embedding_dim = embedding_dim if embedding_dim is not None else proj_dim
+    
+    print(f"Computing classical embeddings for {n_clients} clients...")
+    
+    # Create embeddings using a combination of non-linear transformations
+    embeddings = np.zeros((n_clients, min(1000, 2**embedding_dim)))  # Match quantum format
+    basis_states = np.zeros((n_clients, min(1000, 2**embedding_dim)), dtype=np.int64)
+    
+    for i in range(n_clients):
+        client_grad = projected_grads[i, :embedding_dim]
+        
+        # Normalize
+        norm = np.linalg.norm(client_grad)
+        if norm > 0:
+            client_grad_normalized = client_grad / norm
+        else:
+            client_grad_normalized = client_grad
+        
+        # Apply multiple non-linear transformations to create embedding
+        # 1. Polynomial features for interaction terms
+        poly_features = []
+        for j in range(len(client_grad_normalized)):
+            for k in range(j, len(client_grad_normalized)):
+                poly_features.append(client_grad_normalized[j] * client_grad_normalized[k])
+        
+        # 2. Trigonometric features for periodicity
+        trig_features = []
+        for j, val in enumerate(client_grad_normalized):
+            trig_features.append(np.cos(np.pi * val))
+            trig_features.append(np.sin(np.pi * val))
+        
+        # 3. Exponential features for non-linearity
+        exp_features = []
+        for val in client_grad_normalized:
+            exp_features.append(np.exp(-val**2))
+        
+        # Combine all features
+        all_features = np.concatenate([poly_features, trig_features, exp_features])
+        
+        # Create probability-like distribution
+        # Use softmax-like transformation to create positive values
+        feature_exp = np.exp(all_features - np.max(all_features))  # Numerical stability
+        feature_probs = feature_exp / np.sum(feature_exp)
+        
+        # Simulate measurement outcomes
+        n_outcomes = min(len(feature_probs), embeddings.shape[1])
+        
+        # Sort by probability and take top outcomes
+        sorted_indices = np.argsort(feature_probs)[::-1][:n_outcomes]
+        
+        for k, idx in enumerate(sorted_indices):
+            basis_states[i, k] = idx
+            embeddings[i, k] = feature_probs[idx]
+        
+        # Normalize embedding vector
+        emb_norm = np.linalg.norm(embeddings[i])
+        if emb_norm > 0:
+            embeddings[i] /= emb_norm
+    
+    print(f"Classical embedding computation finished")
+    
+    return {'embeddings': embeddings, 'basis_states': basis_states}
 
 # --- Classical Non-Linear Feature Maps for Matrix Input ---
 def polynomial_feature_map_from_matrix(update_matrix, degree=None, projection_dim=None):
